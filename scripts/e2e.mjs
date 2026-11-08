@@ -75,7 +75,9 @@ try {
   await send('Page.navigate', { url: 'data:text/html,<meta name=viewport content="width=device-width"><p style="font-size:40px">zoom me</p>' });
   await sleep(800);
   await send('Input.synthesizePinchGesture', { x: 590, y: 410, scaleFactor: 2.2, gestureSourceType: 'touch' }); await sleep(400);
-  tok('control: the same pinch zooms an ordinary page', (await evalJs('visualViewport.scale')) > 1.5, String(await evalJs('visualViewport.scale')));
+  const canPinch = (await evalJs('visualViewport.scale')) > 1.5;
+  if (canPinch) tok('control: the same pinch zooms an ordinary page', true);
+  else touchLines.push('SKIP touch: pinch — this browser cannot synthesize a pinch (the control page did not zoom), so zoom blocking is not checked here');
   await send('Page.navigate', { url: url.replace('tests/e2e.html', 'index.html?nosw') });
   await sleep(1500);
   const tile = await evalJs(`(() => { const r = document.querySelector('[data-game=garden]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
@@ -85,7 +87,7 @@ try {
   await tapTouch(...target); await sleep(300);
   tok('a finger on the moving thing finds it', await evalJs('__yalla.sitting.done === true'));
   await send('Input.synthesizePinchGesture', { x: 590, y: 410, scaleFactor: 2.2, gestureSourceType: 'touch' }); await sleep(400);
-  tok('pinching does not zoom the page', (await evalJs('visualViewport.scale')) === 1, String(await evalJs('visualViewport.scale')));
+  if (canPinch) tok('pinching does not zoom the page', (await evalJs('visualViewport.scale')) === 1, String(await evalJs('visualViewport.scale')));
   await touch('touchStart', [[300, 600]]);
   for (let i = 1; i <= 8; i++) { await touch('touchMove', [[300, 600 - i * 40]]); await sleep(16); }
   await touch('touchEnd', []); await sleep(200);
