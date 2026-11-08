@@ -1,6 +1,48 @@
 <!doctype html>
-<html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>يلا نلعب</title></head>
-<body><h1 id="hello">يلا نلعب</h1>
-<script type="module">import { localDate } from './src/core/today.js'; document.body.dataset.today = localDate();</script>
-</body></html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="يلا نلعب">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#bfe6ff">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="stylesheet" href="src/ui/styles.css">
+<title>يلا نلعب</title>
+</head>
+<body data-mode="home">
+<div id="scene" aria-hidden="true"><div id="sun"></div><div id="cloud">☁️</div><div id="grass"></div><div id="tree">🌳</div></div>
+<div id="stage"></div>
+
+<div id="home">
+  <div id="title">يلا نلعب!</div>
+  <div id="tiles">
+    <button class="tile" data-game="garden"><span class="ic">🌳</span>الجنينة</button>
+    <button class="tile" data-game="balloons"><span class="ic">🎈</span>البلالين</button>
+    <button class="tile" data-game="picture"><span class="ic">🧩</span>كمّل الصورة</button>
+  </div>
+</div>
+
+<div id="prompt" role="status"></div>
+<div id="hint"></div>
+<button id="next">التالي ←</button>
+<button id="homeBtn" class="round" aria-label="home">🏠</button>
+<button id="musicBtn" class="round" aria-label="music">🎵</button>
+<button id="parentBtn" class="round" aria-label="parents">⚙️<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18"/></svg></button>
+<div id="micDot">🎤 بيسمع النفخ بس — مفيش تسجيل</div>
+
+<div id="peek">
+  <div class="big" id="peekPic"></div>
+  <div>دلوقتي هاتله الحاجة الحقيقية</div>
+  <div class="small">الموبايل على جنب — والحاجة الحقيقية في إيده</div>
+  <button id="peekHome">🏠</button>
+</div>
+
+<div id="review" hidden></div>
+<script type="module" src="src/ui/app.js"></script>
+</body>
+</html>
