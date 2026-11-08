@@ -6,7 +6,7 @@
   "description": "A sit-together word game for toddlers learning Egyptian Arabic.",
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
-    "e2e": "sh scripts/e2e.sh",
+    "e2e": "node scripts/e2e.mjs",
     "serve": "python3 -m http.server 8770 --bind 127.0.0.1"
   }
 }
