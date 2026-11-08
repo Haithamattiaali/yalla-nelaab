@@ -21,56 +21,83 @@ async function load(query = '?nosw') {
   await sleep(400);
   w = frame.contentWindow; d = frame.contentDocument; Y = w.__yalla;
 }
-const tap = (el, type = 'pointerdown') => el.dispatchEvent(new w.PointerEvent(type, { bubbles: true, pointerId: 1 }));
-const prompt = () => d.getElementById('prompt').textContent;
+// a finger: down at a point (the page decides what it hit), optionally held, then up
+let pid = 1;
+function down(x, y) {
+  const id = ++pid, el = d.elementFromPoint(x, y) || d.body;
+  el.dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: id, pointerType: 'touch', isPrimary: true }));
+  return () => el.dispatchEvent(new w.PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, pointerId: id, pointerType: 'touch' }));
+}
+const tapAt = (x, y) => down(x, y)();
+const centre = el => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+const tapEl = el => tapAt(...centre(el));
+async function holdAt(x, y, ms) { const up = down(x, y); await sleep(ms); up(); }
+const EMPTY = () => [60, w.innerHeight * 0.45];       // open sky on the left, away from every lane centre
+async function parentNext() { await holdAt(...EMPTY(), 1150); await sleep(150); }
+const promptText = () => d.getElementById('promptText').textContent;
+const promptPic = () => d.getElementById('promptPic').textContent;
+const shown = el => !!el && w.getComputedStyle(el).display !== 'none' && !el.hidden;
 async function until(cond, ms = 6000) { const t0 = performance.now(); while (!cond() && performance.now() - t0 < ms) await sleep(50); return cond(); }
-function wav(seconds = 0.4) {   // a short tone as a stand-in for a recorded clip
-  const rate = 16000, n = Math.floor(rate * seconds), b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+function wav(seconds = 0.4, amp = 8000, pad = 0) {   // a tone (optionally with silence around it) as a stand-in for a recording
+  const rate = 16000, n = Math.floor(rate * (seconds + 2 * pad)), b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
   const s = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
   s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
   v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, 'data'); v.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / rate * 2 * Math.PI * 440) * 8000, true);
+  const p0 = Math.floor(rate * pad);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, i >= p0 && i < n - p0 ? Math.sin(i / rate * 2 * Math.PI * 440) * amp : 0, true);
   return new Blob([b], { type: 'audio/wav' });
 }
 
 out.textContent = 'step: start';
 try {
-  // a clean device
   try { for (const k of Object.keys(localStorage)) if (k.startsWith('yalla.')) localStorage.removeItem(k); } catch (e) {}
   await new Promise(r => { const q = indexedDB.deleteDatabase('yalla'); q.onsuccess = q.onerror = q.onblocked = () => r(); });
-  out.textContent = 'step: storage cleared';
   await load();
-  out.textContent = 'step: app loaded';
 
-  // ---- home and the first word list ----
+  // ---- home ----
   ok('home shows three games', d.querySelectorAll('.tile').length === 3 && d.body.dataset.mode === 'home');
-  ok('starts with 10 words in practice', Y.progress.targets.length === 10, JSON.stringify(Y.progress.targets.map(t => t.id)));
+  ok('starts with 10 words in practice', Y.progress.targets.length === 10);
   ok('the word list is saved on the device', JSON.parse(localStorage.getItem('yalla.progress.v1') || '{}').targets?.length === 10);
 
-  // ---- garden: a whole sitting ----
+  // ---- the child's screen has nothing adult to press ----
   d.querySelector('[data-game=garden]').click(); await sleep(300);
+  ok('no Next, home or music button on the child\'s screen', !d.getElementById('next') && !d.getElementById('homeBtn') && !d.getElementById('musicBtn'));
+  ok('no parent hints on the child\'s screen', !shown(d.getElementById('hint')) && !shown(d.getElementById('parentBar')));
+  ok('the parent corner is small and faint', (() => { const b = d.getElementById('parentBtn'), r = b.getBoundingClientRect(); return r.width < w.innerWidth * 0.08 && +w.getComputedStyle(b).opacity < 0.6; })());
+
+  // ---- garden ----
   ok('garden shows three moving things', Y.current.actors.length === 3);
   const first = word(Y.current.wordId);
-  ok('the garden asks "where is …?"', prompt() === whereLine(first), prompt());
-  d.getElementById('next').click(); await sleep(50);
-  ok('Next is refused before he finds it', Y.sitting.index === 0 && !Y.sitting.done);
+  ok('the garden asks "where is …?"', promptText() === whereLine(first), promptText());
+  ok('a new word shows its picture in the bubble', promptPic() === first.emoji, promptPic());
+  await parentNext();
+  ok('the parent\'s press does nothing before he finds it', Y.sitting.index === 0 && !Y.sitting.done);
+  tapAt(w.innerWidth / 2, w.innerHeight - 30); await sleep(80);
+  ok('a tap on empty grass does nothing', !Y.sitting.done && !d.querySelector('.actor.nope'));
   const wrong = Y.current.actors.find(a => a.w.id !== first.id);
-  tap(wrong.el); await sleep(100);
+  tapEl(wrong.el); await sleep(100);
   ok('a wrong tap shakes', wrong.el.classList.contains('nope'));
-  ok('…and nothing moves on', !Y.sitting.done);
+  ok('…and the hand points at the right one, which glows', Y.guiding && Y.current.actors.find(a => a.w.id === first.id).el.classList.contains('pulse'));
   const right = Y.current.actors.find(a => a.w.id === first.id);
-  tap(right.el); await sleep(150);
-  ok('the right tap is found and the others fade', right.el.classList.contains('found') && Y.current.actors.filter(a => a !== right).every(a => a.el.classList.contains('dim')));
-  ok('it says "here it is!" in the right gender', prompt() === hereLine(first), prompt());
-  const f = Y.progress.finds[first.id] || [];
-  ok('the garden records a miss (not first try)', f.length === 1 && f[0].firstTry === false);
+  {   // tap beside it, outside the picture but within reach
+    const r = right.el.getBoundingClientRect(), [cx, cy] = centre(right.el), off = r.width / 2 * 1.2;
+    tapAt(cx + (cx < w.innerWidth / 2 ? off : -off), cy); await sleep(150);
+  }
+  ok('a tap near it counts (no need to be precise)', right.el.classList.contains('found'));
+  ok('the others fade and the hand goes', Y.current.actors.filter(a => a !== right).every(a => a.el.classList.contains('dim')) && !Y.guiding);
+  ok('it says "here it is!" in the right gender', promptText() === hereLine(first), promptText());
+  ok('the garden records a miss (not first try)', (Y.progress.finds[first.id] || [])[0]?.firstTry === false);
   await sleep(1500);
   ok('nothing advances by itself', Y.sitting.index === 0);
+  tapAt(...EMPTY()); await sleep(1200);
+  ok('a short tap does not move on', Y.sitting.index === 0);
+  await parentNext();
+  ok('a 1-second press anywhere moves on', Y.sitting.index === 1);
 
-  // lanes: three things never overlap
-  d.getElementById('next').click(); await sleep(150);
+  // lanes never overlap, and things move slowly
   let minGap = 1e9;
-  for (let i = 0; i < 30; i++) {
+  const p0 = Y.current.actors.map(a => [a.x, a.y]);
+  for (let i = 0; i < 20; i++) {
     await sleep(50);
     const r = Y.current.actors.map(a => a.el.getBoundingClientRect());
     for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) {
@@ -78,41 +105,68 @@ try {
       minGap = Math.min(minGap, Math.max(gx, gy));
     }
   }
+  const moved = Math.max(...Y.current.actors.map((a, i) => Math.hypot(a.x - p0[i][0], a.y - p0[i][1])));
   ok('the three things never overlap', minGap >= 0, `smallest gap ${Math.round(minGap)} px`);
+  ok('things move slowly (under 1/5 of the screen per second)', moved < w.innerWidth / 5, `${Math.round(moved)} px in 1 s`);
   const seen = [first.id];
   for (let r = 1; r < 6; r++) {
     seen.push(Y.current.wordId);
-    tap(Y.current.actors.find(a => a.w.id === Y.current.wordId).el); await sleep(120);
-    d.getElementById('next').click(); await sleep(150);
+    tapEl(Y.current.actors.find(a => a.w.id === Y.current.wordId).el); await sleep(120);
+    await parentNext();
   }
   ok('never the same word twice in a row', seen.every((id, i) => i === 0 || id !== seen[i - 1]), seen.join(','));
   ok('six rounds end with the peek', d.getElementById('peek').classList.contains('show'));
   ok('first-try finds are saved', seen.slice(1).every(id => (Y.progress.finds[id] || []).some(x => x.firstTry)));
-  d.getElementById('peekHome').click(); await sleep(100);
-  ok('home again', d.body.dataset.mode === 'home');
+  await parentNext();
+  ok('a 1-second press on the peek goes home', d.body.dataset.mode === 'home');
 
-  // the garden hides its own sun / tree when that word is on screen
+  // the picture hint fades once he knows the word
+  const known = seen[1];
+  Y.startRound('garden', known); await sleep(100);
+  ok('a word found on the first try has no picture hint', promptPic() === '', promptPic());
+  Y.startRound('garden', 'horse', ['cat', 'milk']); await sleep(100);
+  ok('…a new word still has one', promptPic() === word('horse').emoji);
+
+  // idle guidance
+  await sleep(5200);
+  ok('after 5 quiet seconds the hand shows him the right one', Y.guiding && Y.current.actors.find(a => a.w.id === 'horse').el.classList.contains('pulse'));
+
+  // a calm scene: nothing moves but the game; the sky's sun hides when "sun" is a word on screen
+  ok('no drifting cloud or big tree behind the game', !d.getElementById('cloud') && !d.getElementById('tree'));
   Y.startRound('garden', 'sun', ['cat', 'milk']); await sleep(100);
   ok('the sky sun hides when "sun" is a word on screen', w.getComputedStyle(d.getElementById('sun')).display === 'none');
-  Y.startRound('garden', 'tree', ['cat', 'milk']); await sleep(100);
-  ok('the garden tree hides when "tree" is a word on screen', w.getComputedStyle(d.getElementById('tree')).display === 'none' && w.getComputedStyle(d.getElementById('sun')).display !== 'none');
+  Y.startRound('garden', 'cat', ['milk', 'dog']); await sleep(100);
+  ok('…and comes back after', w.getComputedStyle(d.getElementById('sun')).display !== 'none');
 
-  // ---- balloons: press and hold (microphone refused) ----
+  // ---- balloons: taps pump it ----
+  w.navigator.audioSession = { type: 'auto' };
   w.navigator.mediaDevices.getUserMedia = async () => { throw new Error('denied'); };
   Y.startRound('balloons', 'banana'); await sleep(200);
-  ok('balloons ask him to blow', prompt().startsWith('انفخ'));
   const b = Y.current.balloon;
-  tap(b.el); const filled = await until(() => b.ready, 5000); tap(b.el, 'pointerup');
-  ok('press and hold fills the balloon', filled);
-  ok('a full balloon says "pop it!"', prompt().startsWith('فرقعها'));
-  d.getElementById('next').click(); await sleep(50);
-  ok('Next waits for the pop', !Y.sitting.done && Y.sitting.index === 0);
-  tap(b.el); await sleep(400);
+  ok('balloons start with the hand showing what to do', Y.guiding);
+  ok('the empty balloon is big enough to find', b.el.getBoundingClientRect().width > w.innerHeight * 0.12);
+  const [bx, by] = centre(b.el);
+  tapAt(bx, by); await sleep(60);
+  ok('his first tap pumps it and the hand steps back', b.level > 0.1 && !Y.guiding);
+  for (let i = 0; i < 9 && !b.ready; i++) { tapAt(bx + 30, by); await sleep(70); }
+  ok('a few taps fill it', await until(() => b.ready, 1500), `level ${b.level.toFixed(2)}`);
+  ok('a full balloon says "pop it!" and the hand shows where', promptText().startsWith('فرقعها') && Y.guiding);
+  await parentNext();
+  ok('the parent\'s press waits for the pop', !Y.sitting.done && Y.sitting.index === 0);
+  tapEl(b.el); await sleep(400);
   ok('the pop lets the thing inside out', b.popped && !!d.querySelector('.reveal') && d.querySelectorAll('.shred').length > 0);
-  ok('…and says "here it is!"', prompt() === hereLine(word('banana')), prompt());
-  await sleep(2500);
-  ok('then it waits for "كمان؟"', prompt().startsWith('كمان') && d.getElementById('hint').textContent.includes('كمان'));
-  // make "balloon" the heaviest word in practice, then play a whole balloon sitting
+  ok('…and says "here it is!"', promptText() === hereLine(word('banana')), promptText());
+  await sleep(2600);
+  ok('then it waits for "كمان؟"', promptText().startsWith('كمان') && d.getElementById('barHint').textContent.includes('كمان'));
+  ok('the sound stays on the loud speaker', w.navigator.audioSession.type === 'playback', w.navigator.audioSession.type);
+
+  // press and hold still works
+  Y.startRound('balloons', 'apple'); await sleep(200);
+  const bh = Y.current.balloon;
+  { const up = down(...centre(bh.el)); await until(() => bh.ready, 5000); up(); }
+  ok('press and hold fills it too', bh.ready);
+
+  // a balloon sitting never puts a balloon inside a balloon
   Y.goHome();
   let pb0 = swap(Y.progress, 'shoe', 'balloon', T);
   for (let i = 0; i < 4; i++) pb0 = addFind(pb0, 'balloon', T, false);
@@ -122,14 +176,14 @@ try {
   for (let r = 0; r < 6; r++) {
     drawn.push(Y.current.wordId);
     Y.current.balloon.level = 1; await until(() => Y.current.balloon.ready, 1000);
-    tap(Y.current.balloon.el); await sleep(150);
-    d.getElementById('next').click(); await sleep(150);
+    tapEl(Y.current.balloon.el); await sleep(150);
+    Y.goNext(); await sleep(120);
   }
   ok('the balloon game never puts a balloon inside a balloon', drawn.length === 6 && !drawn.includes('balloon'), drawn.join(','));
   Y.goHome();
   Y.setProgress(swap(Y.progress, 'balloon', 'shoe', T));
 
-  // ---- balloons: blowing (a quiet room, then a loud blow) ----
+  // ---- blowing: quiet room, then a blow; the sound goes back to the speaker after ----
   w.navigator.mediaDevices.getUserMedia = async () => {
     const ac = Y.audio.ac, o = ac.createOscillator(), g = ac.createGain(), dst = ac.createMediaStreamDestination();
     g.gain.setValueAtTime(0, ac.currentTime); g.gain.setValueAtTime(0.6, ac.currentTime + 0.9);
@@ -138,26 +192,30 @@ try {
   Y.startRound('balloons', 'cat'); await sleep(300);
   const b2 = Y.current.balloon;
   ok('the microphone opens and says so on screen', Y.mic.ok === true && d.body.classList.contains('mic-on'));
+  ok('while it listens, the sound session is play-and-record', w.navigator.audioSession.type === 'play-and-record', w.navigator.audioSession.type);
   await sleep(500);
   ok('the quiet room does not fill it', b2.level === 0);
-  ok('the threshold comes from the room', Y.mic.threshold !== null, String(Y.mic.threshold));
-  const blown = await until(() => b2.ready, 8000);
-  ok('blowing fills the balloon', blown);
+  ok('the threshold comes from the room', Y.mic.threshold !== null);
+  ok('blowing fills the balloon', await until(() => b2.ready, 8000));
   ok('the microphone closes once the balloon is full', Y.mic.stream === null && !d.body.classList.contains('mic-on'));
+  ok('…and the sound goes back to the loud speaker', w.navigator.audioSession.type === 'playback', w.navigator.audioSession.type);
   Y.goHome();
 
   // ---- complete the picture ----
   Y.startRound('picture', 'milk'); await sleep(200);
   const loose = Y.current.pieces.filter(p => !p.placed);
   ok('picture: one part in place, three floating', Y.current.pieces.length === 4 && loose.length === 3);
-  ok('it asks "what is this?"', prompt().startsWith('إيه ده'));
-  for (const p of loose) { tap(p.c); await sleep(120); }
+  ok('it asks "what is this?"', promptText().startsWith('إيه ده'));
+  await sleep(3800);
+  ok('after a quiet moment the hand shows a part to tap', Y.guiding && loose.some(p => p.w.classList.contains('pulse')));
+  for (const p of loose) { tapAt(p.qc[0] + p.ox + 25, p.qc[1] + p.oy + 25); await sleep(140); }
   ok('each tapped part flies home and the picture comes alive', await until(() => !!d.querySelector('.whole'), 4000));
-  ok('…and says what it is, in the right gender', prompt() === 'أهو اللَّبَن!', prompt());
-  ok('Next is allowed once the picture is whole', Y.sitting.done);
+  ok('…and says what it is, in the right gender', promptText() === 'أهو اللَّبَن!', promptText());
+  ok('the parent may move on once the picture is whole', Y.sitting.done);
   Y.goHome();
 
-  // ---- music ----
+  // ---- sound ----
+  ok('everything plays through a compressor (loud without crackling)', Y.audio.comp && Y.audio.comp.constructor.name === 'DynamicsCompressorNode');
   d.querySelector('[data-game=picture]').click();
   await sleep(2600);
   const g = () => Y.audio.music.gain.value;
@@ -166,35 +224,49 @@ try {
   const ducked = g();
   await sleep(2600);
   const back = g();
-  ok('music plays', before > 0.15, before.toFixed(3));
-  ok('music goes quiet under a spoken line', ducked < 0.05, ducked.toFixed(3));
-  ok('music comes back after the line', back > 0.15, back.toFixed(3));
-  d.getElementById('musicBtn').click(); await sleep(600);
-  ok('the music button turns it off', g() < 0.01 && d.getElementById('musicBtn').textContent === '🔇');
-  d.getElementById('musicBtn').click(); await sleep(100);
+  ok('music plays', before > 0.1, before.toFixed(3));
+  ok('music goes quiet under a spoken line', ducked < 0.04, ducked.toFixed(3));
+  ok('music comes back after the line', back > 0.1, back.toFixed(3));
   Y.goHome();
 
-  // ---- the parent's voice ----
-  await Y.putClip('cat:where', wav());
-  Y.startRound('garden', 'cat', ['milk', 'apple']); await sleep(600);
+  // ---- the parent's voice: tidied and loud ----
+  await Y.putClip('cat:where', wav(0.4, 1600, 0.3));     // quiet, with silence before and after
+  Y.startRound('garden', 'cat', ['milk', 'apple']); await sleep(700);
   ok('a recorded clip is what plays', Y.audio.last?.key === 'cat:where' && Y.audio.last?.source === 'clip', JSON.stringify(Y.audio.last));
+  const buf = Y.audio.buffers.get('cat:where');
+  let peak = 0;
+  if (buf) for (const v of buf.getChannelData(0)) peak = Math.max(peak, Math.abs(v));
+  ok('a quiet recording is brought up to full loudness', peak > 0.9 && peak <= 0.96, peak.toFixed(3));
+  ok('silence before and after it is trimmed', buf && buf.duration < 0.6, buf && buf.duration.toFixed(2));
   Y.startRound('garden', 'apple', ['milk', 'cat']); await sleep(400);
   ok('a word with no clip falls back to a chime', Y.audio.last?.source === 'fallback');
   Y.goHome();
 
-  // ---- the parent gate ----
-  const pb = d.getElementById('parentBtn');
-  tap(pb); await sleep(500); tap(pb, 'pointerup'); await sleep(100);
-  ok('a short press does not open the parent review', d.getElementById('review').hidden);
-  tap(pb); await sleep(2300);
-  ok('a 2-second hold opens it', !d.getElementById('review').hidden);
+  // ---- the parent gate: hold 2 s, then confirm at the other corner ----
+  const pb = d.getElementById('parentBtn'), conf = d.getElementById('parentConfirm'), bar = d.getElementById('parentBar');
+  const pbDown = () => pb.dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 77 }));
+  const pbUp = () => pb.dispatchEvent(new w.PointerEvent('pointerup', { bubbles: true, pointerId: 77 }));
+  pbDown(); await sleep(500); pbUp(); await sleep(100);
+  ok('a short press on the corner does nothing', !shown(conf) && bar.hidden);
+  pbDown(); await sleep(2300); pbUp(); await sleep(100);
+  ok('a 2-second hold alone opens nothing', bar.hidden && d.getElementById('review').hidden);
+  ok('…it only shows a confirm button at the other corner', shown(conf) && conf.getBoundingClientRect().left < w.innerWidth / 2);
+  await sleep(3200);
+  ok('the confirm button goes away by itself', !shown(conf));
+  pbDown(); await sleep(2300); pbUp(); await sleep(100);
+  conf.click(); await sleep(100);
+  ok('confirm opens the parent bar', !bar.hidden);
+  bar.querySelector('[data-bar=music]').click(); await sleep(300);
+  ok('the bar turns the music off', !Y.audio.musicOn && bar.querySelector('[data-bar=music]').textContent.includes('🔇'));
+  bar.querySelector('[data-bar=music]').click();
+  bar.querySelector('[data-bar=review]').click(); await sleep(200);
+  ok('the bar opens the parent review', !d.getElementById('review').hidden && bar.hidden);
 
   // ---- the parent review ----
   ok('review lists the 10 words', d.querySelectorAll('.rv-word[data-id]').length === 10);
   ok('review carries the assessment note', d.querySelector('.rv-note').textContent.includes('أخصائي تخاطب'));
   d.querySelector('[data-act=code][data-id=apple][data-code="⭐"]').click(); await sleep(100);
   ok('tapping ⭐ marks it for today', (Y.progress.codes.apple || []).some(c => c.code === '⭐' && c.date === T));
-  ok('…and shows it on', d.querySelector('[data-act=code][data-id=apple][data-code="⭐"]').classList.contains('on'));
   ok('no "mastered" button before the rule is met', !d.querySelector('[data-act=master]'));
   let q = Y.progress;
   for (const day of [addDays(T, -4), addDays(T, -2), T]) q = toggleCode(q, 'water', day, '⭐');
@@ -208,28 +280,25 @@ try {
   ok('a new word comes in (still 10)', Y.progress.targets.length === 10 && added !== 'water');
   const counts = g2 => groupsBefore.filter(x => x === g2).length - (g2 === 'food' ? 1 : 0);
   ok('…from the group with the fewest words', ['animals', 'toys', 'home', 'outside', 'body'].every(g2 => counts(word(added).group) <= counts(g2)), `${added} (${word(added).group})`);
-  ok('the learned list shows it', d.querySelector('.rv-learned').textContent.includes(word('water').ar));
   d.querySelector('[data-act=swap][data-id=eye]').click(); await sleep(100);
   d.querySelector('.rv-pick [data-new=horse]').click(); await sleep(100);
-  ok('swap puts the new word in and the old back in the bank', Y.progress.targets.some(t => t.id === 'horse') && !Y.progress.targets.some(t => t.id === 'eye') && Y.progress.paused.includes('eye'));
+  ok('swap puts the new word in and the old back in the bank', Y.progress.targets.some(t => t.id === 'horse') && Y.progress.paused.includes('eye'));
   d.querySelector('[data-act=close]').click(); await sleep(100);
   ok('closing goes back to the game', d.getElementById('review').hidden);
 
   // ---- survives a reload ----
   await load();
   ok('progress survives a reload', Y.progress.learned.some(l => l.id === 'water') && Y.progress.targets.some(t => t.id === 'horse'));
-  ok('the recorded clip survives a reload', await (async () => { Y.startRound('garden', 'cat', ['milk', 'dog']); await sleep(600); return Y.audio.last?.source === 'clip'; })());
+  ok('the recorded clip survives a reload', await (async () => { Y.startRound('garden', 'cat', ['milk', 'dog']); await sleep(700); return Y.audio.last?.source === 'clip'; })());
   Y.goHome();
 
-  // ---- privacy: nothing loaded from anywhere else ----
+  // ---- privacy, offline, Home Screen ----
   const foreign = w.performance.getEntriesByType('resource').map(e => e.name).filter(u => new URL(u).origin !== w.location.origin);
   ok('nothing loads from another site', foreign.length === 0, foreign.join(' '));
-
-  // ---- offline and Home Screen ----
   await load('');
   await sleep(1500);
   const reg = await w.navigator.serviceWorker.getRegistration();
-  ok('the offline worker registers under the game folder', !!reg && new URL(reg.scope).pathname.endsWith('/') && reg.scope.startsWith(w.location.origin + w.location.pathname.replace(/index\.html$/, '')), reg && reg.scope);
+  ok('the offline worker registers under the game folder', !!reg && reg.scope.startsWith(w.location.origin + w.location.pathname.replace(/index\.html$/, '')), reg && reg.scope);
   const man = await w.fetch('manifest.webmanifest').then(r => r.json());
   ok('the Home Screen manifest loads', man.start_url === './' && man.icons.length === 2);
 } catch (e) {

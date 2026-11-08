@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="يلا نلعب">
@@ -15,7 +15,7 @@
 <title>يلا نلعب</title>
 </head>
 <body data-mode="home">
-<div id="scene" aria-hidden="true"><div id="sun"></div><div id="cloud">☁️</div><div id="grass"></div><div id="tree">🌳</div></div>
+<div id="scene" aria-hidden="true"><div id="sun"></div><div id="grass"></div></div>
 <div id="stage"></div>
 
 <div id="home">
@@ -27,19 +27,31 @@
   </div>
 </div>
 
-<div id="prompt" role="status"></div>
-<div id="hint"></div>
-<button id="next">التالي ←</button>
-<button id="homeBtn" class="round" aria-label="home">🏠</button>
-<button id="musicBtn" class="round" aria-label="music">🎵</button>
-<button id="parentBtn" class="round" aria-label="parents">⚙️<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18"/></svg></button>
+<!-- what the child sees: the game, one bubble, and a hand that shows what to do -->
+<div id="prompt" role="status"><span id="promptText"></span><span id="promptPic"></span></div>
+<div id="hand" aria-hidden="true">👆</div>
+<div id="holdRing" aria-hidden="true"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17"/></svg></div>
 <div id="micDot">🎤 بيسمع النفخ بس — مفيش تسجيل</div>
 
 <div id="peek">
   <div class="big" id="peekPic"></div>
   <div>دلوقتي هاتله الحاجة الحقيقية</div>
   <div class="small">الموبايل على جنب — والحاجة الحقيقية في إيده</div>
-  <button id="peekHome">🏠</button>
+</div>
+
+<!-- for the parent only: a faint corner; hold 2 seconds, then confirm at the other corner -->
+<button id="parentBtn" aria-label="parents">⚙️<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18"/></svg></button>
+<button id="parentConfirm" aria-label="open parent controls">افتح للأهل</button>
+<div id="parentBar" hidden>
+  <div class="pb-row">
+    <button data-bar="next">التالي ←</button>
+    <button data-bar="home">🏠 البداية</button>
+    <button data-bar="music">🎵 الموسيقى</button>
+    <button data-bar="review">📋 المراجعة</button>
+    <button data-bar="close" aria-label="close">✕</button>
+  </div>
+  <div id="barHint"></div>
+  <div class="pb-tip">بعد ما يلاقيها: اضغط مطوّل ثانية على أي مكان فاضي ← اللي بعدها</div>
 </div>
 
 <div id="review" hidden></div>

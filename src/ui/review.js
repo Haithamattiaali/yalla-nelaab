@@ -4,7 +4,7 @@ import { BANK, GROUPS, word } from '../core/words.js';
 import { whereLine, hereLine, clipKey, sharedKey, SHARED } from '../core/lines.js';
 import { CODES, toggleCode, hasCode, learnedReady, stalled, promote, swap, weekSummary } from '../core/progress.js';
 import { putClip, clipKeys } from './store.js';
-import { forgetClip, stopVoice } from './audio.js';
+import { forgetClip, stopVoice, setSession } from './audio.js';
 
 const CODE_NAMES = { '👆': 'فهمها', '🔁': 'قالها وراك', '⭐': 'قالها لوحده', '➕': 'قالها مع كلمة تانية', '✋': 'إشارة بس' };
 const GROUP_NAMES = { food: 'أكل وشرب', animals: 'حيوانات', toys: 'لعب', home: 'البيت', outside: 'برّه', body: 'الجسم' };
@@ -101,8 +101,9 @@ async function record(key, btn) {
   if (rec) { if (rec.key === key) stopRecording(); return; }
   if (!navigator.mediaDevices || !window.MediaRecorder) { toast('التسجيل مش متاح هنا — افتح اللعبة من Safari'); return; }
   let stream;
+  setSession('play-and-record');
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (e) { toast('محتاجين إذن الميكروفون عشان نسجّل صوتك'); return; }
+  catch (e) { setSession('playback'); toast('محتاجين إذن الميكروفون عشان نسجّل صوتك'); return; }
   stopVoice();
   const type = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
   const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
@@ -113,6 +114,7 @@ async function record(key, btn) {
   mr.onstop = async () => {
     clearTimeout(rec && rec.timer);
     stream.getTracks().forEach(t => t.stop());
+    setSession('playback');   // back to the loud speaker before playing it back
     rec = null;
     const blob = new Blob(chunks, { type: mr.mimeType || type || 'audio/mp4' });
     if (blob.size) { await putClip(key, blob); forgetClip(key); have.add(key); api.say(key); }
