@@ -1,5 +1,5 @@
 // Offline: keep a copy of the game; when online, always fetch the newest version first.
-const CACHE = 'yalla-v1';
+const CACHE = 'yalla-v2';
 const FILES = [
   './',
   'index.html',

@@ -1,5 +1,6 @@
 // Complete the picture: one part is in place, three float around; he taps a part and it
 // flies home; when the picture is whole it comes alive and says what it is.
+// A tap counts for the nearest floating part; after a few quiet seconds a hand shows one.
 import { hereLine, clipKey, sharedKey } from '../core/lines.js';
 
 const clipFor = (qx, qy) => `inset(${qy ? 50 : 0}% ${qx ? 0 : 50}% ${qy ? 0 : 50}% ${qx ? 50 : 0}%)`;
@@ -31,7 +32,7 @@ export function start(ctx, target) {
       const qc = [fl + S * (qx * 0.5 + 0.25), ft + S * (qy * 0.5 + 0.25)], sp = spots[k++];
       p.hx = sp[0] - qc[0]; p.hy = sp[1] - qc[1]; p.ox = p.hx; p.oy = p.hy;
       w.classList.add('loose');
-      c.addEventListener('pointerdown', e => { e.preventDefault(); if (!p.placed && !p.flying) { p.flying = true; ctx.sfx.whoosh(); } });
+      p.qc = qc;
     }
     return p;
   });
@@ -56,6 +57,20 @@ export function start(ctx, target) {
     ctx.finish(true);
   }
 
+  const IDLE_MS = 3500;
+  let idle = null;
+  function waitThenShow() {
+    clearTimeout(idle);
+    idle = setTimeout(() => {
+      const p = pieces.find(q => !q.placed && !q.flying);
+      if (!p || done) return;
+      p.w.classList.add('pulse');
+      ctx.guide(() => (p.placed || p.flying || done ? null : spot(p)));
+    }, IDLE_MS);
+  }
+  const spot = p => ({ x: p.qc[0] + p.ox, y: p.qc[1] + p.oy });
+  waitThenShow();
+
   ctx.setPrompt('إيه ده؟ 🤔');
   ctx.setHint('اسأله «إيه ده؟» وسيبه يكمّل الصورة');
   ctx.say(sharedKey('what'));
@@ -63,6 +78,19 @@ export function start(ctx, target) {
 
   return {
     pieces,
+    tap(x, y) {
+      if (done) return false;
+      let best = null, bestD = Infinity;
+      for (const p of pieces) {
+        if (p.placed || p.flying) continue;
+        const c = spot(p), d = Math.hypot(x - c.x, y - c.y);
+        if (d <= S * 0.42 && d < bestD) { best = p; bestD = d; }   // a quarter is S/2 wide; reach a bit beyond it
+      }
+      if (!best) return false;
+      best.flying = true; best.w.classList.remove('pulse'); ctx.unguide(); ctx.sfx.whoosh();
+      waitThenShow();
+      return true;
+    },
     tick(t) {
       for (const p of pieces) {
         if (p.flying) {
@@ -75,6 +103,6 @@ export function start(ctx, target) {
         if (p.w.isConnected) draw(p, t);
       }
     },
-    stop() { document.body.classList.remove('no-sun'); },
+    stop() { clearTimeout(idle); document.body.classList.remove('no-sun'); },
   };
 }

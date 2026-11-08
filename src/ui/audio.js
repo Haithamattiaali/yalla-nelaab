@@ -2,22 +2,45 @@
 // The tune goes quiet under every spoken line, then comes back.
 import { getClip } from './store.js';
 
-export const A = { ac: null, master: null, music: null, sfx: null, voice: null, musicOn: true, base: 0.22, buffers: new Map(), current: null, last: null };
+export const A = { ac: null, master: null, comp: null, music: null, sfx: null, voice: null, musicOn: true, base: 0.16, buffers: new Map(), current: null, last: null };
+
+// iPhone / iPad: by default web sound follows the silent switch, and once the microphone has been
+// used the sound goes to the small ear speaker. "playback" sends it to the loud speaker again.
+export function setSession(type) {
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) {}
+}
+let unlocked = false;
+function unlockOlderIOS() {   // older iOS has no audioSession: playing a silent <audio> once does the same
+  if (unlocked || navigator.audioSession) return;
+  unlocked = true;
+  try {
+    const el = document.createElement('audio');
+    el.setAttribute('playsinline', '');
+    el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+    el.play().catch(() => {});
+  } catch (e) {}
+}
 
 export function audio() {
   if (!A.ac) {
     const C = window.AudioContext || window.webkitAudioContext;
+    setSession('playback');
     A.ac = new C();
-    A.master = A.ac.createGain(); A.master.connect(A.ac.destination);
+    // everything goes through a compressor, so lines can be loud without crackling
+    A.comp = A.ac.createDynamicsCompressor();
+    A.comp.threshold.value = -20; A.comp.knee.value = 12; A.comp.ratio.value = 4; A.comp.attack.value = 0.003; A.comp.release.value = 0.25;
+    A.comp.connect(A.ac.destination);
+    A.master = A.ac.createGain(); A.master.gain.value = 1.3; A.master.connect(A.comp);
     A.music = A.ac.createGain(); A.music.gain.value = 0; A.music.connect(A.master);
-    A.sfx = A.ac.createGain(); A.sfx.gain.value = 0.9; A.sfx.connect(A.master);
-    A.voice = A.ac.createGain(); A.voice.gain.value = 1.4; A.voice.connect(A.master);
+    A.sfx = A.ac.createGain(); A.sfx.gain.value = 1; A.sfx.connect(A.master);
+    A.voice = A.ac.createGain(); A.voice.gain.value = 1.6; A.voice.connect(A.master);
   }
-  if (A.ac.state === 'suspended') A.ac.resume();
+  unlockOlderIOS();
+  if (A.ac.state === 'suspended' || A.ac.state === 'interrupted') A.ac.resume();
   return A.ac;
 }
 
-export function tone(f, start, dur, type = 'sine', vol = 0.18, dest) {
+export function tone(f, start, dur, type = 'sine', vol = 0.35, dest) {
   const ac = audio(), o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.value = f; o.connect(g); g.connect(dest || A.sfx);
   const t = ac.currentTime + Math.max(0, start);
@@ -33,9 +56,9 @@ export function noise(dur = 0.22, vol = 0.5) {   // a soft pop
 }
 export const sfx = {
   prompt: () => { tone(660, 0, 0.18); tone(880, 0.18, 0.25); },
-  cheer: (at = 0) => [523, 659, 784, 1047].forEach((f, i) => tone(f, at + i * 0.09, 0.25, 'triangle')),
-  nope: () => tone(220, 0, 0.25, 'sine', 0.12),
-  click: () => tone(1250, 0, 0.09, 'square', 0.05),
+  cheer: (at = 0) => [523, 659, 784, 1047].forEach((f, i) => tone(f, at + i * 0.09, 0.25, 'triangle', 0.4)),
+  nope: () => tone(220, 0, 0.25, 'sine', 0.25),
+  click: () => tone(1250, 0, 0.09, 'square', 0.1),
   ready: () => tone(990, 0, 0.12),
 };
 
@@ -79,6 +102,25 @@ export function setMusic(on) {
 // ----- the parent's voice -----
 // kind: 'prompt' or 'cheer' picks the stand-in sound when no clip was recorded yet.
 export function forgetClip(key) { A.buffers.delete(key); }
+
+// A phone recording is often quiet and starts or ends with silence: trim the silence
+// (keeping a short margin) and bring the loudest point up to 0.95.
+export function tidyClip(ac, buf) {
+  const ch = [...Array(buf.numberOfChannels)].map((_, i) => buf.getChannelData(i));
+  let peak = 0;
+  for (const d of ch) for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
+  if (peak < 0.005) return buf;   // silence: leave it alone
+  const gate = peak * 0.04, margin = Math.floor(buf.sampleRate * 0.06);
+  const loud = i => ch.some(d => Math.abs(d[i]) > gate);
+  let a = 0, b = buf.length - 1;
+  while (a < b && !loud(a)) a++;
+  while (b > a && !loud(b)) b--;
+  a = Math.max(0, a - margin); b = Math.min(buf.length - 1, b + margin);
+  const out = ac.createBuffer(buf.numberOfChannels, b - a + 1, buf.sampleRate), k = 0.95 / peak;
+  ch.forEach((d, c) => { const o = out.getChannelData(c); for (let i = a; i <= b; i++) o[i - a] = d[i] * k; });
+  return out;
+}
+
 async function bufferFor(key) {
   if (A.buffers.has(key)) return A.buffers.get(key);
   let buf = null;
@@ -87,6 +129,7 @@ async function bufferFor(key) {
     try {
       const data = await blob.arrayBuffer();
       buf = await new Promise((res, rej) => { const p = A.ac.decodeAudioData(data, res, rej); if (p && p.then) p.then(res, rej); });
+      buf = tidyClip(A.ac, buf);
     } catch (e) { buf = null; }
   }
   A.buffers.set(key, buf);

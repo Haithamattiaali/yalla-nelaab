@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { initialProgress, nextNewWord, toggleCode, hasCode, addFind, learnedReady, stalled, promote, swap, weekSummary, sanitize, TARGET_COUNT } from '../src/core/progress.js';
+import { initialProgress, nextNewWord, toggleCode, hasCode, addFind, learnedReady, stalled, promote, swap, weekSummary, sanitize, needsPictureCue, TARGET_COUNT } from '../src/core/progress.js';
 import { word } from '../src/core/words.js';
 
 const T = '2026-11-08';
@@ -89,4 +89,14 @@ test('a broken save is rebuilt, a good one is kept', () => {
   const p = toggleCode(initialProgress(T), 'cat', T, '⭐');
   const s = sanitize(JSON.parse(JSON.stringify({ ...p, codes: { ...p.codes, nope: [{ date: T, code: '⭐' }], cat: [...p.codes.cat, { date: 'x', code: '⭐' }] } })), T);
   assert.deepEqual(s.codes, { cat: [{ date: T, code: '⭐' }] });
+});
+
+test('a new word shows its picture in the bubble until he shows he knows it', () => {
+  let p = initialProgress(T);
+  assert.equal(needsPictureCue(p, 'cat'), true);
+  assert.equal(needsPictureCue(addFind(p, 'cat', T, false), 'cat'), true, 'a find after a miss does not count');
+  assert.equal(needsPictureCue(addFind(p, 'cat', T, true), 'cat'), false);
+  assert.equal(needsPictureCue(toggleCode(p, 'cat', T, '👆'), 'cat'), false);
+  assert.equal(needsPictureCue(toggleCode(p, 'cat', T, '✋'), 'cat'), true, 'a sign alone keeps the picture');
+  assert.equal(needsPictureCue(promote(p, 'cat', T).progress, 'cat'), false);
 });

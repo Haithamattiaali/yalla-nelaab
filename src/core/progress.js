@@ -107,6 +107,13 @@ export function swap(p, oldId, newId, today) {
   return q;
 }
 
+// A new word gets its picture in the bubble as a hint; the hint fades for good once he shows
+// he knows it (the parent marked 👆 🔁 ⭐ ➕, or he found it on the first try in the garden).
+export function needsPictureCue(p, id) {
+  const knows = (p.codes[id] || []).some(c => ANY_SIGN_OF_LIFE.has(c.code)) || (p.finds[id] || []).some(f => f.firstTry);
+  return !knows && !isLearned(p, id);
+}
+
 // What the parent sees per word: this week's marks and the garden's finds.
 export function weekSummary(p, id, today) {
   const from = addDays(today, -6);

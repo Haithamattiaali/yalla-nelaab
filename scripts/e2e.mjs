@@ -60,5 +60,41 @@ while (Date.now() - t0 < TIMEOUT) {
   if (state !== 'pending') break;
 }
 console.log(text || '(no results)');
-console.log(`e2e: ${state === 'pending' ? 'timed out' : state} (${Math.round((Date.now() - t0) / 1000)} s)`);
-finish(state === 'yes' ? 0 : 1);
+
+// ---- real touch input (Chrome's touch emulation on an iPad-sized screen; not iOS itself) ----
+const touchLines = [];
+let touchFails = 0;
+const tok = (name, cond, extra = '') => { touchLines.push(`${cond ? 'PASS' : 'FAIL'} touch: ${name}${cond || !extra ? '' : '  — ' + extra}`); if (!cond) touchFails++; };
+const evalJs = async expr => (await send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }))?.result?.value;
+const touch = async (type, points) => send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i + 1 })) });
+const tapTouch = async (x, y) => { await touch('touchStart', [[x, y]]); await touch('touchEnd', []); };
+try {
+  await send('Emulation.setDeviceMetricsOverride', { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true });
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  // control: an ordinary page DOES zoom with this pinch, so "no zoom" below is a real result
+  await send('Page.navigate', { url: 'data:text/html,<meta name=viewport content="width=device-width"><p style="font-size:40px">zoom me</p>' });
+  await sleep(800);
+  await send('Input.synthesizePinchGesture', { x: 590, y: 410, scaleFactor: 2.2, gestureSourceType: 'touch' }); await sleep(400);
+  tok('control: the same pinch zooms an ordinary page', (await evalJs('visualViewport.scale')) > 1.5, String(await evalJs('visualViewport.scale')));
+  await send('Page.navigate', { url: url.replace('tests/e2e.html', 'index.html?nosw') });
+  await sleep(1500);
+  const tile = await evalJs(`(() => { const r = document.querySelector('[data-game=garden]').getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await tapTouch(...tile); await sleep(500);
+  tok('a finger on the garden tile starts the garden', (await evalJs('document.body.dataset.mode')) === 'garden');
+  const target = await evalJs(`(() => { const a = __yalla.current.actors.find(a => a.w.id === __yalla.current.wordId); const r = a.el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+  await tapTouch(...target); await sleep(300);
+  tok('a finger on the moving thing finds it', await evalJs('__yalla.sitting.done === true'));
+  await send('Input.synthesizePinchGesture', { x: 590, y: 410, scaleFactor: 2.2, gestureSourceType: 'touch' }); await sleep(400);
+  tok('pinching does not zoom the page', (await evalJs('visualViewport.scale')) === 1, String(await evalJs('visualViewport.scale')));
+  await touch('touchStart', [[300, 600]]);
+  for (let i = 1; i <= 8; i++) { await touch('touchMove', [[300, 600 - i * 40]]); await sleep(16); }
+  await touch('touchEnd', []); await sleep(200);
+  tok('a swipe does not scroll the page', (await evalJs('Math.round(scrollY + visualViewport.offsetTop)')) === 0);
+  await touch('touchStart', [[60, 370]]); await sleep(1200); await touch('touchEnd', []); await sleep(400);
+  tok('a 1-second finger press moves on', (await evalJs('__yalla.sitting.index')) === 1);
+} catch (e) { tok('touch phase ran', false, e.message); }
+console.log(touchLines.join('\n'));
+
+const allOk = state === 'yes' && touchFails === 0;
+console.log(`e2e: ${state === 'pending' ? 'timed out' : allOk ? 'yes' : 'no'} (${Math.round((Date.now() - t0) / 1000)} s)`);
+finish(allOk ? 0 : 1);
