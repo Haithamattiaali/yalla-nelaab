@@ -1,18 +1,240 @@
 <!doctype html>
 <html><head><meta charset="utf-8"><title>e2e</title></head>
 <body><pre id="results" data-pass="pending"></pre>
-<iframe id="app" src="../index.html" style="width:1180px;height:820px;border:0"></iframe>
+<iframe id="app" style="width:1180px;height:820px;border:0"></iframe>
 <script type="module">
+import { toggleCode, swap, addFind } from '../src/core/progress.js';
+import { word } from '../src/core/words.js';
+import { whereLine, hereLine } from '../src/core/lines.js';
+import { addDays, localDate } from '../src/core/today.js';
+
 const out = document.getElementById('results'), lines = [];
 let fails = 0;
-const ok = (name, cond) => { lines.push(`${cond ? 'PASS' : 'FAIL'} ${name}`); if (!cond) fails++; };
+const ok = (name, cond, extra = '') => { lines.push(`${cond ? 'PASS' : 'FAIL'} ${name}${cond || !extra ? '' : '  — ' + extra}`); if (!cond) fails++; out.textContent = lines.join('\n'); };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const frame = document.getElementById('app');
-await new Promise(r => frame.addEventListener('load', r, { once: true }));
-await sleep(300);
-const doc = frame.contentDocument;
-ok('page loads', doc.getElementById('hello') !== null);
-ok('core module runs', /^\d{4}-\d{2}-\d{2}$/.test(doc.body.dataset.today || ''));
-out.textContent = lines.join('\n');
+const T = localDate();
+let w, d, Y;
+async function load(query = '?nosw') {
+  frame.src = '../index.html' + query;
+  await new Promise(r => frame.addEventListener('load', r, { once: true }));
+  await sleep(400);
+  w = frame.contentWindow; d = frame.contentDocument; Y = w.__yalla;
+}
+const tap = (el, type = 'pointerdown') => el.dispatchEvent(new w.PointerEvent(type, { bubbles: true, pointerId: 1 }));
+const prompt = () => d.getElementById('prompt').textContent;
+async function until(cond, ms = 6000) { const t0 = performance.now(); while (!cond() && performance.now() - t0 < ms) await sleep(50); return cond(); }
+function wav(seconds = 0.4) {   // a short tone as a stand-in for a recorded clip
+  const rate = 16000, n = Math.floor(rate * seconds), b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+  const s = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.sin(i / rate * 2 * Math.PI * 440) * 8000, true);
+  return new Blob([b], { type: 'audio/wav' });
+}
+
+out.textContent = 'step: start';
+try {
+  // a clean device
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith('yalla.')) localStorage.removeItem(k); } catch (e) {}
+  await new Promise(r => { const q = indexedDB.deleteDatabase('yalla'); q.onsuccess = q.onerror = q.onblocked = () => r(); });
+  out.textContent = 'step: storage cleared';
+  await load();
+  out.textContent = 'step: app loaded';
+
+  // ---- home and the first word list ----
+  ok('home shows three games', d.querySelectorAll('.tile').length === 3 && d.body.dataset.mode === 'home');
+  ok('starts with 10 words in practice', Y.progress.targets.length === 10, JSON.stringify(Y.progress.targets.map(t => t.id)));
+  ok('the word list is saved on the device', JSON.parse(localStorage.getItem('yalla.progress.v1') || '{}').targets?.length === 10);
+
+  // ---- garden: a whole sitting ----
+  d.querySelector('[data-game=garden]').click(); await sleep(300);
+  ok('garden shows three moving things', Y.current.actors.length === 3);
+  const first = word(Y.current.wordId);
+  ok('the garden asks "where is …?"', prompt() === whereLine(first), prompt());
+  d.getElementById('next').click(); await sleep(50);
+  ok('Next is refused before he finds it', Y.sitting.index === 0 && !Y.sitting.done);
+  const wrong = Y.current.actors.find(a => a.w.id !== first.id);
+  tap(wrong.el); await sleep(100);
+  ok('a wrong tap shakes', wrong.el.classList.contains('nope'));
+  ok('…and nothing moves on', !Y.sitting.done);
+  const right = Y.current.actors.find(a => a.w.id === first.id);
+  tap(right.el); await sleep(150);
+  ok('the right tap is found and the others fade', right.el.classList.contains('found') && Y.current.actors.filter(a => a !== right).every(a => a.el.classList.contains('dim')));
+  ok('it says "here it is!" in the right gender', prompt() === hereLine(first), prompt());
+  const f = Y.progress.finds[first.id] || [];
+  ok('the garden records a miss (not first try)', f.length === 1 && f[0].firstTry === false);
+  await sleep(1500);
+  ok('nothing advances by itself', Y.sitting.index === 0);
+
+  // lanes: three things never overlap
+  d.getElementById('next').click(); await sleep(150);
+  let minGap = 1e9;
+  for (let i = 0; i < 30; i++) {
+    await sleep(50);
+    const r = Y.current.actors.map(a => a.el.getBoundingClientRect());
+    for (let a = 0; a < 3; a++) for (let b = a + 1; b < 3; b++) {
+      const gx = Math.max(r[a].left, r[b].left) - Math.min(r[a].right, r[b].right), gy = Math.max(r[a].top, r[b].top) - Math.min(r[a].bottom, r[b].bottom);
+      minGap = Math.min(minGap, Math.max(gx, gy));
+    }
+  }
+  ok('the three things never overlap', minGap >= 0, `smallest gap ${Math.round(minGap)} px`);
+  const seen = [first.id];
+  for (let r = 1; r < 6; r++) {
+    seen.push(Y.current.wordId);
+    tap(Y.current.actors.find(a => a.w.id === Y.current.wordId).el); await sleep(120);
+    d.getElementById('next').click(); await sleep(150);
+  }
+  ok('never the same word twice in a row', seen.every((id, i) => i === 0 || id !== seen[i - 1]), seen.join(','));
+  ok('six rounds end with the peek', d.getElementById('peek').classList.contains('show'));
+  ok('first-try finds are saved', seen.slice(1).every(id => (Y.progress.finds[id] || []).some(x => x.firstTry)));
+  d.getElementById('peekHome').click(); await sleep(100);
+  ok('home again', d.body.dataset.mode === 'home');
+
+  // the garden hides its own sun / tree when that word is on screen
+  Y.startRound('garden', 'sun', ['cat', 'milk']); await sleep(100);
+  ok('the sky sun hides when "sun" is a word on screen', w.getComputedStyle(d.getElementById('sun')).display === 'none');
+  Y.startRound('garden', 'tree', ['cat', 'milk']); await sleep(100);
+  ok('the garden tree hides when "tree" is a word on screen', w.getComputedStyle(d.getElementById('tree')).display === 'none' && w.getComputedStyle(d.getElementById('sun')).display !== 'none');
+
+  // ---- balloons: press and hold (microphone refused) ----
+  w.navigator.mediaDevices.getUserMedia = async () => { throw new Error('denied'); };
+  Y.startRound('balloons', 'banana'); await sleep(200);
+  ok('balloons ask him to blow', prompt().startsWith('انفخ'));
+  const b = Y.current.balloon;
+  tap(b.el); const filled = await until(() => b.ready, 5000); tap(b.el, 'pointerup');
+  ok('press and hold fills the balloon', filled);
+  ok('a full balloon says "pop it!"', prompt().startsWith('فرقعها'));
+  d.getElementById('next').click(); await sleep(50);
+  ok('Next waits for the pop', !Y.sitting.done && Y.sitting.index === 0);
+  tap(b.el); await sleep(400);
+  ok('the pop lets the thing inside out', b.popped && !!d.querySelector('.reveal') && d.querySelectorAll('.shred').length > 0);
+  ok('…and says "here it is!"', prompt() === hereLine(word('banana')), prompt());
+  await sleep(2500);
+  ok('then it waits for "كمان؟"', prompt().startsWith('كمان') && d.getElementById('hint').textContent.includes('كمان'));
+  // make "balloon" the heaviest word in practice, then play a whole balloon sitting
+  Y.goHome();
+  let pb0 = swap(Y.progress, 'shoe', 'balloon', T);
+  for (let i = 0; i < 4; i++) pb0 = addFind(pb0, 'balloon', T, false);
+  Y.setProgress(pb0);
+  d.querySelector('[data-game=balloons]').click(); await sleep(200);
+  const drawn = [];
+  for (let r = 0; r < 6; r++) {
+    drawn.push(Y.current.wordId);
+    Y.current.balloon.level = 1; await until(() => Y.current.balloon.ready, 1000);
+    tap(Y.current.balloon.el); await sleep(150);
+    d.getElementById('next').click(); await sleep(150);
+  }
+  ok('the balloon game never puts a balloon inside a balloon', drawn.length === 6 && !drawn.includes('balloon'), drawn.join(','));
+  Y.goHome();
+  Y.setProgress(swap(Y.progress, 'balloon', 'shoe', T));
+
+  // ---- balloons: blowing (a quiet room, then a loud blow) ----
+  w.navigator.mediaDevices.getUserMedia = async () => {
+    const ac = Y.audio.ac, o = ac.createOscillator(), g = ac.createGain(), dst = ac.createMediaStreamDestination();
+    g.gain.setValueAtTime(0, ac.currentTime); g.gain.setValueAtTime(0.6, ac.currentTime + 0.9);
+    o.connect(g); g.connect(dst); o.start(); return dst.stream;
+  };
+  Y.startRound('balloons', 'cat'); await sleep(300);
+  const b2 = Y.current.balloon;
+  ok('the microphone opens and says so on screen', Y.mic.ok === true && d.body.classList.contains('mic-on'));
+  await sleep(500);
+  ok('the quiet room does not fill it', b2.level === 0);
+  ok('the threshold comes from the room', Y.mic.threshold !== null, String(Y.mic.threshold));
+  const blown = await until(() => b2.ready, 8000);
+  ok('blowing fills the balloon', blown);
+  ok('the microphone closes once the balloon is full', Y.mic.stream === null && !d.body.classList.contains('mic-on'));
+  Y.goHome();
+
+  // ---- complete the picture ----
+  Y.startRound('picture', 'milk'); await sleep(200);
+  const loose = Y.current.pieces.filter(p => !p.placed);
+  ok('picture: one part in place, three floating', Y.current.pieces.length === 4 && loose.length === 3);
+  ok('it asks "what is this?"', prompt().startsWith('إيه ده'));
+  for (const p of loose) { tap(p.c); await sleep(120); }
+  ok('each tapped part flies home and the picture comes alive', await until(() => !!d.querySelector('.whole'), 4000));
+  ok('…and says what it is, in the right gender', prompt() === 'أهو اللَّبَن!', prompt());
+  ok('Next is allowed once the picture is whole', Y.sitting.done);
+  Y.goHome();
+
+  // ---- music ----
+  d.querySelector('[data-game=picture]').click();
+  await sleep(2600);
+  const g = () => Y.audio.music.gain.value;
+  const before = g();
+  Y.startRound('garden', 'dog', ['cat', 'milk']); await sleep(250);
+  const ducked = g();
+  await sleep(2600);
+  const back = g();
+  ok('music plays', before > 0.15, before.toFixed(3));
+  ok('music goes quiet under a spoken line', ducked < 0.05, ducked.toFixed(3));
+  ok('music comes back after the line', back > 0.15, back.toFixed(3));
+  d.getElementById('musicBtn').click(); await sleep(600);
+  ok('the music button turns it off', g() < 0.01 && d.getElementById('musicBtn').textContent === '🔇');
+  d.getElementById('musicBtn').click(); await sleep(100);
+  Y.goHome();
+
+  // ---- the parent's voice ----
+  await Y.putClip('cat:where', wav());
+  Y.startRound('garden', 'cat', ['milk', 'apple']); await sleep(600);
+  ok('a recorded clip is what plays', Y.audio.last?.key === 'cat:where' && Y.audio.last?.source === 'clip', JSON.stringify(Y.audio.last));
+  Y.startRound('garden', 'apple', ['milk', 'cat']); await sleep(400);
+  ok('a word with no clip falls back to a chime', Y.audio.last?.source === 'fallback');
+  Y.goHome();
+
+  // ---- the parent gate ----
+  const pb = d.getElementById('parentBtn');
+  tap(pb); await sleep(500); tap(pb, 'pointerup'); await sleep(100);
+  ok('a short press does not open the parent review', d.getElementById('review').hidden);
+  tap(pb); await sleep(2300);
+  ok('a 2-second hold opens it', !d.getElementById('review').hidden);
+
+  // ---- the parent review ----
+  ok('review lists the 10 words', d.querySelectorAll('.rv-word[data-id]').length === 10);
+  ok('review carries the assessment note', d.querySelector('.rv-note').textContent.includes('أخصائي تخاطب'));
+  d.querySelector('[data-act=code][data-id=apple][data-code="⭐"]').click(); await sleep(100);
+  ok('tapping ⭐ marks it for today', (Y.progress.codes.apple || []).some(c => c.code === '⭐' && c.date === T));
+  ok('…and shows it on', d.querySelector('[data-act=code][data-id=apple][data-code="⭐"]').classList.contains('on'));
+  ok('no "mastered" button before the rule is met', !d.querySelector('[data-act=master]'));
+  let q = Y.progress;
+  for (const day of [addDays(T, -4), addDays(T, -2), T]) q = toggleCode(q, 'water', day, '⭐');
+  Y.setProgress(q); await Y.openReview(); await sleep(100);
+  const m = d.querySelector('[data-act=master][data-id=water]');
+  ok('⭐ on 3 days in a week shows "اتقنها"', !!m);
+  const groupsBefore = Y.progress.targets.map(t => word(t.id).group);
+  m.click(); await sleep(150);
+  const added = Y.progress.targets.at(-1).id;
+  ok('the mastered word moves to learned', Y.progress.learned.some(l => l.id === 'water') && !Y.progress.targets.some(t => t.id === 'water'));
+  ok('a new word comes in (still 10)', Y.progress.targets.length === 10 && added !== 'water');
+  const counts = g2 => groupsBefore.filter(x => x === g2).length - (g2 === 'food' ? 1 : 0);
+  ok('…from the group with the fewest words', ['animals', 'toys', 'home', 'outside', 'body'].every(g2 => counts(word(added).group) <= counts(g2)), `${added} (${word(added).group})`);
+  ok('the learned list shows it', d.querySelector('.rv-learned').textContent.includes(word('water').ar));
+  d.querySelector('[data-act=swap][data-id=eye]').click(); await sleep(100);
+  d.querySelector('.rv-pick [data-new=horse]').click(); await sleep(100);
+  ok('swap puts the new word in and the old back in the bank', Y.progress.targets.some(t => t.id === 'horse') && !Y.progress.targets.some(t => t.id === 'eye') && Y.progress.paused.includes('eye'));
+  d.querySelector('[data-act=close]').click(); await sleep(100);
+  ok('closing goes back to the game', d.getElementById('review').hidden);
+
+  // ---- survives a reload ----
+  await load();
+  ok('progress survives a reload', Y.progress.learned.some(l => l.id === 'water') && Y.progress.targets.some(t => t.id === 'horse'));
+  ok('the recorded clip survives a reload', await (async () => { Y.startRound('garden', 'cat', ['milk', 'dog']); await sleep(600); return Y.audio.last?.source === 'clip'; })());
+  Y.goHome();
+
+  // ---- privacy: nothing loaded from anywhere else ----
+  const foreign = w.performance.getEntriesByType('resource').map(e => e.name).filter(u => new URL(u).origin !== w.location.origin);
+  ok('nothing loads from another site', foreign.length === 0, foreign.join(' '));
+
+  // ---- offline and Home Screen ----
+  await load('');
+  await sleep(1500);
+  const reg = await w.navigator.serviceWorker.getRegistration();
+  ok('the offline worker registers under the game folder', !!reg && new URL(reg.scope).pathname.endsWith('/') && reg.scope.startsWith(w.location.origin + w.location.pathname.replace(/index\.html$/, '')), reg && reg.scope);
+  const man = await w.fetch('manifest.webmanifest').then(r => r.json());
+  ok('the Home Screen manifest loads', man.start_url === './' && man.icons.length === 2);
+} catch (e) {
+  ok('the test ran without errors', false, e && (e.stack || e.message));
+}
+out.textContent = lines.join('\n') + `\n${lines.length - fails} of ${lines.length} passed`;
 out.dataset.pass = fails === 0 ? 'yes' : 'no';
 </script></body></html>
