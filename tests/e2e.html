@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>e2e</title></head>
+<body><pre id="results" data-pass="pending"></pre>
+<iframe id="app" src="../index.html" style="width:1180px;height:820px;border:0"></iframe>
+<script type="module">
+const out = document.getElementById('results'), lines = [];
+let fails = 0;
+const ok = (name, cond) => { lines.push(`${cond ? 'PASS' : 'FAIL'} ${name}`); if (!cond) fails++; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const frame = document.getElementById('app');
+await new Promise(r => frame.addEventListener('load', r, { once: true }));
+await sleep(300);
+const doc = frame.contentDocument;
+ok('page loads', doc.getElementById('hello') !== null);
+ok('core module runs', /^\d{4}-\d{2}-\d{2}$/.test(doc.body.dataset.today || ''));
+out.textContent = lines.join('\n');
+out.dataset.pass = fails === 0 ? 'yes' : 'no';
+</script></body></html>

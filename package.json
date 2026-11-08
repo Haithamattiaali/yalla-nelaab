@@ -1,0 +1,12 @@
+{
+  "name": "yalla-nelaab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A sit-together word game for toddlers learning Egyptian Arabic.",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "e2e": "sh scripts/e2e.sh",
+    "serve": "python3 -m http.server 8770 --bind 127.0.0.1"
+  }
+}

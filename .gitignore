@@ -1,0 +1,5 @@
+# private notes and test pages stay on this Mac (they name the child)
+.fertilize/
+.work/
+.DS_Store
+node_modules/
